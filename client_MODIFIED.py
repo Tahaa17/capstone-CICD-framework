@@ -180,7 +180,7 @@ def get_speed():
         delay_counter = 0
     #print(delay_counter)
     delay_counter = delay_counter + 1
-    return speed
+    return speed if not reverse else speed * -1
 # ==============================================================================
 # -- World ---------------------------------------------------------------------
 # ==============================================================================
@@ -318,23 +318,30 @@ class DualControl(object):
         global auto
         global bkup_cam
         global park
-        if testingFlag == 1:
+        global reverse
+        #(REZWANA) CODE FOR TEST CASES, SENDS A CLICK MOUSE EVENT SO THAT THE CLIENT IS IN FOCUS
+        if testingFlag >= 1:
             post_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, button = 2, pos = (5, 5))
             pygame.event.post(post_event)
             event = pygame.event.poll()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return True
+            #(REZWANA) pygame recognizes steering wheel kit and gear shifter as "joys or joystick"
+            #we are checking if the current event is from a joystick
             elif event.type == pygame.JOYBUTTONDOWN:
                 print(event.button)
-                #parsing all gear shift events
+                #(REZWANA) since there are 2 joy sticks, the indices for these are 0 and 1
+                #index 1 = gear shifter
+                #index 2 = steering wheel kit
+
+                #(REZWANA) this if statement checks, if the input is from the gear shifter
                 if event.joy == 1:
-                    print(event.button)
+                    #if its a 0 input, put in park, if 1 put in drive etc.
                     if event.button == 0:
                         print(park)
                         park = 1
                     elif event.button == 1:
-                        global reverse
                         park=0
                         if (reverse==1):
                             reverse=0
@@ -345,7 +352,9 @@ class DualControl(object):
                         reverse = 1
                         self._control.gear = -1
                         park = 0
-                #parsing all steering wheel events
+                #(REZWANA) if the input is a joystick, but it is NOT from the gear shifter, it is from the steering wheel kit
+                #the rest of these if statemenst are parsing inputs from the steering wheel kit
+                #all the different buttons etc.
                 else:
                     global indicator
                     if event.button == 4:
@@ -372,7 +381,6 @@ class DualControl(object):
                             attentionFlag = 0
                             subprocess.Popen(['python','capture.py'])
                     elif event.button == 5:
-                        #testing joysticks - jayash
                         if event.joy == 0:
                             
                             if(reverse == 0):
@@ -456,7 +464,24 @@ class DualControl(object):
             elif isinstance(self._control, carla.WalkerControl):
                 self._parse_walker_keys(pygame.key.get_pressed(), clock.get_time())
             world.player.apply_control(self._control)
+        
+        #(REZWANA) These if statements are for specific test cases
+        #when this client is run through our test cases, we pass a testing flag variable
+        #the value of this flag is based on what test is running
+        #for example if the testing flag is 1 we are testing acceleration
+        if testingFlag==3:
+            reverse=1
+            self._control.gear = -1
+        if testingFlag == 1:
+            self._control.gear = 1
+            reverse=0
+        if testingFlag==4:
+            self._control.gear=1
+            park=1
 
+    #(REZWANA) These next 2 functions are calculating the wheel axis turn and the throttle/brake
+    #we do not exactly know how these functions are working, but we do know this is where it calculates
+    #the throttle/brake and wheel turning
     def _parse_vehicle_keys(self, keys, milliseconds):
         self._control.throttle = 1.0 if keys[K_UP] or keys[K_w] else 0.0
         steer_increment = 5e-4 * milliseconds
@@ -508,6 +533,8 @@ class DualControl(object):
                     subprocess.call("adb shell am startservice -a com.lexa.fakegps.START -e lat " + str(loc[locationPath][0])  + " -e long " +  str(loc[locationPath][1]) ,shell=True)
                     nav = 0
                 nav += 1
+            #(REZWANA) we have a global variable park that is changed with the gear shifter
+            #this will only let the car accelerate if the car is not in park
             throttleCmd = 1 if not park else 0
             
             
@@ -518,9 +545,26 @@ class DualControl(object):
             brakeCmd = 0
         elif brakeCmd > 1:
             brakeCmd = 1
+        #(REZWANA) These if statements are again for our test cases
+        #based on what testing flag is passed in, different things are happening within carla
+        #for example testing flag 1 will set the car to accelerate, turn off the brakes and take the car out of park
         if testingFlag == 1:
-            throttleCmd =1
+            throttleCmd = 1
+            brakeCmd=0
             park = 0
+        elif testingFlag == 2:
+            throttleCmd = 1
+            brakeCmd = 1
+            park = 0
+        elif testingFlag ==3:
+            throttleCmd=1
+            brakeCmd=0
+            park=0
+        elif testingFlag==4:
+            throttleCmd = 1 if not park else 0
+            brakeCmd=0
+            park=1
+
         self._control.steer = steerCmd
         self._control.brake = brakeCmd
         self._control.throttle = throttleCmd
@@ -1065,7 +1109,14 @@ def game_loop(args, testing_Flag):
             (1920, 1080))
 
         hud = HUD(args.width, args.height)
-        world = World(client.get_world(), hud, args.filter)
+        #(REZWANA) Here is where we change the world/environment
+        #CARLA comes with default worlds (town01-town0x)
+        #reading the documentation will tell you a description of the world
+        #Town06 is mostly flat highways
+
+        #Reading the documentation will also let you learn how to create custom worlds, and this is where you would load them in
+        world_map = client.load_world('Town06')
+        world = World(world_map, hud, args.filter)
         controller = DualControl(world, args.autopilot)
 
         clock = pygame.time.Clock()
@@ -1090,6 +1141,7 @@ def game_loop(args, testing_Flag):
                     return
                 world.tick(clock)
                 world.render(display)
+                print(get_speed())
                 if(auto == 1):
                     world.player.apply_control(carla.VehicleControl(throttle=.25, steer=steer))
                 pygame.display.flip()
